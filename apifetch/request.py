@@ -1,4 +1,21 @@
 import abc
+import time
+import signal
+
+
+class RateLimiterInterface(metaclass=abc.ABCMeta):
+    @classmethod
+    def __subclasshook__(cls, subclass):
+        return (
+            hasattr(subclass, "is_rejected")
+            and callable(subclass.is_rejected)
+            or NotImplemented
+        )
+
+    @abc.abstractmethod
+    def is_rejected(self):
+        """Load in the data set"""
+        raise NotImplementedError
 
 
 class RequestStrategy(object):
@@ -6,10 +23,12 @@ class RequestStrategy(object):
     tries = 1
     total_time = None
 
-    # In case you need to consider some code(s) between 400 and 599 as "normal" (e.g. for API calls returning empty response as 404)
+    # In case you need to consider some code(s) between 400 and 599 as
+    # "normal" (e.g. for API calls returning empty response as 404)
     normal_codes = []
 
-    # In case some codes should not be retried (e.g. a 401 or 403 is unlikely to get better after a retry).
+    # In case some codes should not be retried (e.g. a 401 or 403 is
+    # unlikely to get better after a retry).
     # "DDx" and "Dxx" patterns (e.g. "4xx", "40x") are acceptable.
     fatal_codes = []
 
@@ -72,21 +91,6 @@ class RequestStrategy(object):
     def rate_limiter(self, limiter: RateLimiterInterface):
         self.rate_limiter = limiter
         return self
-
-
-class RateLimiterInterface(metaclass=abc.ABCMeta):
-    @classmethod
-    def __subclasshook__(cls, subclass):
-        return (
-            hasattr(subclass, "is_rejected")
-            and callable(subclass.is_rejected)
-            or NotImplemented
-        )
-
-    @abc.abstractmethod
-    def is_rejected(self):
-        """Load in the data set"""
-        raise NotImplementedError
 
 
 class LocalGCRA(RateLimiterInterface):

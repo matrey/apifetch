@@ -2,25 +2,105 @@
 # Copyright 2014 Ian Cordasco, Cory Benfield
 # Licensed under the Apache License, Version 2.0
 
-import collections
 import base64
 import time
 from datetime import datetime
+import secrets
 
 from requests import compat
 
 
-class Timer:
-    def start():
+class Timer(object):
+    def start(self):
         self._start_ts = time.perf_counter()
         self.start_date = datetime.utcnow()
 
-    def stop():
+    def stop(self):
         self.end_date = datetime.utcnow()
         self.total_time_s = time.perf_counter() - self._start_ts
 
 
-class LogStrategy:
+class HeaderFilter(object):
+    # TODO: cookie
+
+    stack = []
+
+    def mask_by_name(self, header_name, show_first_chars=None):
+        def fn(name, value):
+            return (
+                name,
+                value
+                if name.lower() != header_name.lower()
+                else (
+                    "<<masked>>"
+                    if show_first_chars is None
+                    else "<<masked value={}...>>".format(value[0:show_first_chars])
+                ),
+            )
+
+        self.stack.append(fn)
+
+        return self
+
+    def mask_authorization(self):
+        def fn(name, value):
+            cval = None
+            if name.lower() == "authorization":
+                parts = value.split(" ", 1)
+                if len(parts) == 2:
+                    type = parts[0].lower()
+                    if type == "basic":
+                        try:
+                            basic = base64.b64decode(parts[1]).decode().split(":", 1)
+                        except Exception:
+                            basic = ("?",)
+                        cval = "{} <<masked password, username={}>>".format(
+                            parts[0], basic[0]
+                        )
+                    elif type == "bearer":
+                        jwt = parts[1].split(".")
+                        if (
+                            len(jwt) == 3
+                        ):  # We can be fairly confident it's a JWT, we remove the signature
+                            try:
+                                # Thanks https://gist.github.com/perrygeo/ee7c65bb1541ff6ac770 for the tip about padding (risk this exception otherwise: binascii.Error: Incorrect padding)
+                                header = base64.urlsafe_b64decode(
+                                    jwt[0] + "==="
+                                ).decode()
+                                body = base64.urlsafe_b64decode(jwt[1] + "===").decode()
+                                jwtout = (
+                                    header,
+                                    body,
+                                )
+                            except Exception:
+                                jwtout = (
+                                    "?",
+                                    "?",
+                                )
+                            cval = "{} <<masked JWT, header={}, body={}>>".format(
+                                parts[0], jwtout[0], jwtout[1]
+                            )
+                        else:  # Other kind of token
+                            cval = "{} <<masked opaque token>>".format(parts[0])
+                    else:
+                        cval = "{} <<masked>>".format(parts[0])
+
+            return (
+                name,
+                value if cval is None else cval,
+            )
+
+        self.stack.append(fn)
+        
+        return self
+
+
+class BodyFilter(object):
+    # TODO: ability to mask some values
+    pass
+
+
+class LogStrategy(object):
 
     request_header_filter = None
     response_header_filter = None
@@ -39,7 +119,7 @@ class LogStrategy:
         self.boundary = "rawtrace.{}.{}".format(int(time.time()), secrets.token_hex(16))
 
         self.bytearr.extend(
-            _coerce_to_bytes(
+            self.coerce_to_bytes(
                 'Content-Type: multipart/mixed; boundary="{}"'.format(self.boundary)
             )
             + b"\r\n"
@@ -67,7 +147,11 @@ class LogStrategy:
         return self
 
     def dump_failed(
-        request, reason: str = None, exception: Exception = None, timing: Timer = None
+        self,
+        request,
+        reason: str = None,
+        exception: Exception = None,
+        timing: Timer = None,
     ):
         self._dump_request_data(
             request, proxy_info=None,
@@ -86,7 +170,7 @@ class LogStrategy:
         if timing:
             self._dump_timer(timing)
 
-    def dump(response, timing: Timer = None):
+    def dump(self, response, timing: Timer = None):
         """Dump all requests and responses including redirects.
 
         This takes the response returned by requests and will dump all
@@ -104,9 +188,9 @@ class LogStrategy:
 
     def _write_boundary(self, type=None):
         self.bytearr.extend(
-            self._coerce_to_bytes("--%s\r\n" % self.boundary)
+            self.coerce_to_bytes("--%s\r\n" % self.boundary)
             + (
-                self._coerce_to_bytes('X-Type: "%s"\r\n' % type)
+                self.coerce_to_bytes('X-Type: "%s"\r\n' % type)
                 if type is not None
                 else b""
             )
@@ -114,26 +198,25 @@ class LogStrategy:
         )
 
     def _write_headers(self, headers, header_filter=None):
-        for name in headers.keys():
-            for value in headers.getlist(name):
-                if header_filter is not None:
-                    mname = name
-                    mvalue = value
-                    for mask in header_filter.stack:
-                        mname, mvalue = mask(mname, mvalue)
-                    self.bytearr.extend(
-                        self.coerce_to_bytes(mname)
-                        + b": "
-                        + self.coerce_to_bytes(mvalue)
-                        + b"\r\n"
-                    )
-                else:
-                    self.bytearr.extend(
-                        self.coerce_to_bytes(name)
-                        + b": "
-                        + self.coerce_to_bytes(value)
-                        + b"\r\n"
-                    )
+        for name, value in headers.items():
+            if header_filter is not None:
+                mname = name
+                mvalue = value
+                for mask in header_filter.stack:
+                    mname, mvalue = mask(mname, mvalue)
+                self.bytearr.extend(
+                    self.coerce_to_bytes(mname)
+                    + b": "
+                    + self.coerce_to_bytes(mvalue)
+                    + b"\r\n"
+                )
+            else:
+                self.bytearr.extend(
+                    self.coerce_to_bytes(name)
+                    + b": "
+                    + self.coerce_to_bytes(value)
+                    + b"\r\n"
+                )
 
     @classmethod
     def get_proxy_information(cls, response):
@@ -190,7 +273,7 @@ class LogStrategy:
 
         if request.body:
             if isinstance(request.body, compat.basestring):
-                self.bytearr.extend(_coerce_to_bytes(request.body))
+                self.bytearr.extend(self.coerce_to_bytes(request.body))
             else:
                 # In the event that the body is a file-like object, let's not try
                 # to read everything into memory.
@@ -236,7 +319,7 @@ class LogStrategy:
             self.bytearr.extend(response.content)
         self.bytearr.extend(b"\r\n")
 
-    def _dump_one(response, strategy: LogStrategy):
+    def _dump_one(self, response):
         """Dump a single request-response cycle's information.
 
         This will take a response object and dump only the data that requests can
@@ -253,7 +336,7 @@ class LogStrategy:
         )
         self._dump_response_data(response)
 
-    def _dump_timer(timing: Timer):
+    def _dump_timer(self, timing: Timer):
         self._write_boundary("timing-hint")
         self.bytearr.extend(
             b"<< "
@@ -265,81 +348,3 @@ class LogStrategy:
             + b" >>"
             + b"\r\n"
         )
-
-
-class HeaderFilter:
-    # TODO: cookie
-
-    stack = []
-
-    def mask_by_name(self, header_name, show_first_chars=None):
-        def l(name, value):
-            return (
-                name,
-                value
-                if name.lower() != header_name.lower()
-                else (
-                    "<<masked>>"
-                    if show_first_chars is None
-                    else "<<masked value={}...>>".format(value[0:show_first_chars])
-                ),
-            )
-
-        self.stack.append(l)
-
-        return self
-
-    def mask_authorization(self):
-        def l(name, value):
-            cval = None
-            if name.lower() == "authorization":
-                parts = value.split(" ", 1)
-                if len(parts) == 2:
-                    type = parts[0].lower()
-                    if type == "basic":
-                        try:
-                            basic = base64.b64decode(parts[1]).decode().split(":", 1)
-                        except:
-                            basic = ("?",)
-                        cval = "{} <<masked password, username={}>>".format(
-                            parts[0], basic[0]
-                        )
-                    elif type == "bearer":
-                        jwt = parts[1].split(".")
-                        if (
-                            len(jwt) == 3
-                        ):  # We can be fairly confident it's a JWT, we remove the signature
-                            try:
-                                # Thanks https://gist.github.com/perrygeo/ee7c65bb1541ff6ac770 for the tip about padding (risk this exception otherwise: binascii.Error: Incorrect padding)
-                                header = base64.urlsafe_b64decode(
-                                    jwt[0] + "==="
-                                ).decode()
-                                body = base64.urlsafe_b64decode(jwt[1] + "===").decode()
-                                jwtout = (
-                                    header,
-                                    body,
-                                )
-                            except:
-                                jwtout = (
-                                    "?",
-                                    "?",
-                                )
-                            cval = "{} <<masked JWT, header={}, body={}>>".format(
-                                parts[0], jwtout[0], jwtout[1]
-                            )
-                        else:  # Other kind of token
-                            cval = "{} <<masked opaque token>>".format(parts[0])
-                    else:
-                        cval = "{} <<masked>>".format(parts[0])
-
-            return (
-                name,
-                value if cval is None else cval,
-            )
-
-        self.stack.append(l)
-
-
-class BodyFilter:
-    # TODO: ability to mask some values
-    pass

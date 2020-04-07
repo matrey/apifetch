@@ -1,5 +1,12 @@
 import requests
 import cchardet
+import urllib
+import logging
+import time
+import math
+from .request import RequestStrategy, SignalTimeout
+from .log import LogStrategy, Timer
+from .exceptions import RequestFailure, RequestTimeout
 
 # Monkey-patch requests to have it use cchardet instead of chardet
 # cf https://github.com/psf/requests/issues/2359#issuecomment-552736992
@@ -11,11 +18,6 @@ class ForceCchardet:
 
 requests.Response.apparent_encoding = ForceCchardet.apparent_encoding
 
-import urllib
-import logging
-import signal
-import math
-import secrets
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +50,7 @@ seems to be working well. Note the caveats though:
 * it is not threadsafe, signals are always delivered to the main thread,
 so you can't put this in any other thread.
 * one possible down side with this context manager approach is that you can't
-know if the code actually timed out or not (the SignalTimeout.TimeoutException
+know if the code actually timed out or not (the SignalTimeout.RequestTimeout
 exception raised stays internal to the process manager ; we have to manually
 set a flag while still inside the process manager, after the call to requests, and
 manually raise an exception if the flag is unset once out of the process manager)
@@ -65,7 +67,6 @@ def post(url, **kwargs):
 
 
 def request_url(method, url, strategy: RequestStrategy, log: LogStrategy, **kwargs):
-    is_logged = log is not None
 
     tries = 0
     start_ts = time.perf_counter()
@@ -117,7 +118,7 @@ def request_url(method, url, strategy: RequestStrategy, log: LogStrategy, **kwar
             )
         except RequestFailure:
             raise  # Game over, no time left
-        except (TimeoutException, requests.exceptions.RequestException) as e:
+        except (RequestTimeout, requests.exceptions.RequestException) as e:
             logger.debug("Request exception (%s): %s", type(e).__name__, str(e))
             # Low level error, e.g. connection error, socket error, etc. --> retryable
             # Could also be a override_kill_timeout reached --> it will get intercepted when re-entering the loop
@@ -218,6 +219,7 @@ def _request_url_once(  # allow to override the kill timeout (to fit in max tota
         with SignalTimeout(kill_timeout):
             if is_logged:
                 timer = Timer()
+                timer.start()
 
             r = s.send(prepped, **kwargs)
 
@@ -226,7 +228,7 @@ def _request_url_once(  # allow to override the kill timeout (to fit in max tota
             timed_out = False
 
         if timed_out and r is None:
-            raise TimeoutException("Killed on timeout ({}s)".format(kill_timeout))
+            raise RequestTimeout("Killed on timeout ({}s)".format(kill_timeout))
 
     except Exception as e:
         # If we are here, it means the request failed (no response), we log the request
