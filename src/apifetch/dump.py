@@ -1,5 +1,10 @@
+# Derived from https://raw.githubusercontent.com/requests/toolbelt/22f424a6d336fb37a416926a6524aa3604bab64d/requests_toolbelt/utils/dump.py
+# Copyright 2014 Ian Cordasco, Cory Benfield
+# Licensed under the Apache License, Version 2.0
+
 """This module provides functions for dumping information about responses."""
 import collections
+import base64
 
 from requests import compat
 
@@ -15,11 +20,101 @@ HTTP_VERSIONS = {
 _PrefixSettings = collections.namedtuple("PrefixSettings", ["request", "response"])
 
 
+def request_headers_mask_none(name, value):
+    return (
+        name,
+        value,
+    )
+
+
+def request_headers_mask_by_name(header_name, show_first=None):
+    def l(name, value):
+        return (
+            name,
+            value
+            if name != header_name
+            else (
+                "<<masked>>"
+                if show_first is None
+                else "<<masked value={}...>>".format(value[0:show_first])
+            ),
+        )
+
+    return l
+
+
+def request_headers_mask_authorization(name, value):
+    cval = None
+    if name.lower() == "authorization":
+        parts = value.split(" ", 1)
+        if len(parts) == 2:
+            type = parts[0].lower()
+            if type == "basic":
+                try:
+                    basic = base64.b64decode(parts[1]).decode().split(":", 1)
+                except:
+                    basic = ("?",)
+                cval = "{} <<masked password, username={}>>".format(parts[0], basic[0])
+            elif type == "bearer":
+                jwt = parts[1].split(".")
+                if (
+                    len(jwt) == 3
+                ):  # We can be fairly confident it's a JWT, we remove the signature
+                    try:
+                        # Thanks https://gist.github.com/perrygeo/ee7c65bb1541ff6ac770 for the tip about padding (risk this exception otherwise: binascii.Error: Incorrect padding)
+                        header = base64.urlsafe_b64decode(jwt[0] + "===").decode()
+                        body = base64.urlsafe_b64decode(jwt[1] + "===").decode()
+                        jwtout = (
+                            header,
+                            body,
+                        )
+                    except:
+                        jwtout = (
+                            "?",
+                            "?",
+                        )
+                    cval = "{} <<masked JWT, header={}, body={}>>".format(
+                        parts[0], jwtout[0], jwtout[1]
+                    )
+                else:  # Other kind of token
+                    cval = "{} <<masked token>>".format(parts[0])
+            else:
+                cval = "{} <<masked>>".format(parts[0])
+
+    return (
+        name,
+        value if cval is None else cval,
+    )
+
+
+def response_body_filter_raw(response, bytearr):
+    bytearr.extend(response.content)
+
+
+def response_body_filter_nobin(response, bytearr):
+    if (
+        len(response.content) > 0
+        and response.encoding is None
+        and response.apparent_encoding is None
+    ):
+        bytearr.extend(b"<< Binary response body >>")
+    else:
+        bytearr.extend(response.content)
+
+
 class PrefixSettings(_PrefixSettings):
     def __new__(cls, request, response):
         request = _coerce_to_bytes(request)
         response = _coerce_to_bytes(response)
         return super(PrefixSettings, cls).__new__(cls, request, response)
+
+
+def _write_boundary(data, boundary, type=None):
+    data.extend(
+        _coerce_to_bytes("--%s\r\n" % boundary)
+        + (_coerce_to_bytes('X-Type: "%s"\r\n' % type) if type is not None else b"")
+        + b"\r\n"
+    )
 
 
 def _get_proxy_information(response):
@@ -52,7 +147,9 @@ def _build_request_path(url, proxy_info):
     return request_path, uri
 
 
-def _dump_request_data(request, prefixes, bytearr, proxy_info=None):
+def _dump_request_data(
+    request, prefixes, bytearr, boundary, proxy_info=None, request_headers_mask=None
+):
     if proxy_info is None:
         proxy_info = {}
 
@@ -60,6 +157,7 @@ def _dump_request_data(request, prefixes, bytearr, proxy_info=None):
     method = _coerce_to_bytes(proxy_info.pop("method", request.method))
     request_path, uri = _build_request_path(request.url, proxy_info)
 
+    _write_boundary(bytearr, boundary, "request")
     # <prefix><METHOD> <request-path> HTTP/1.1
     bytearr.extend(prefix + method + b" " + request_path + b" HTTP/1.1\r\n")
 
@@ -68,8 +166,18 @@ def _dump_request_data(request, prefixes, bytearr, proxy_info=None):
     host_header = _coerce_to_bytes(headers.pop("Host", uri.netloc))
     bytearr.extend(prefix + b"Host: " + host_header + b"\r\n")
 
+    if request_headers_mask is None:
+        request_headers_mask = request_headers_mask_none
+
     for name, value in headers.items():
-        bytearr.extend(prefix + _format_header(name, value))
+        if isinstance(request_headers_mask, list):
+            mname = name
+            mvalue = value
+            for mask in request_headers_mask:
+                mname, mvalue = mask(mname, mvalue)
+        else:
+            mname, mvalue = request_headers_mask(name, value)
+        bytearr.extend(prefix + _format_header(mname, mvalue))
 
     bytearr.extend(prefix + b"\r\n")
     if request.body:
@@ -82,7 +190,9 @@ def _dump_request_data(request, prefixes, bytearr, proxy_info=None):
     bytearr.extend(b"\r\n")
 
 
-def _dump_response_data(response, prefixes, bytearr):
+def _dump_response_data(
+    response, prefixes, bytearr, boundary, response_body_filter=None
+):
     prefix = prefixes.response
     # Let's interact almost entirely with urllib3's response
     raw = response.raw
@@ -90,6 +200,7 @@ def _dump_response_data(response, prefixes, bytearr):
     # Let's convert the version int from httplib to bytes
     version_str = HTTP_VERSIONS.get(raw.version, b"?")
 
+    _write_boundary(bytearr, boundary, "response")
     # <prefix>HTTP/<version_str> <status_code> <reason>
     bytearr.extend(
         prefix
@@ -109,7 +220,11 @@ def _dump_response_data(response, prefixes, bytearr):
 
     bytearr.extend(prefix + b"\r\n")
 
-    bytearr.extend(response.content)
+    # Call the response filter
+    if response_body_filter is None:
+        response_body_filter = response_body_filter_raw
+    response_body_filter(response, bytearr)
+    bytearr.extend(prefix + b"\r\n")
 
 
 def _coerce_to_bytes(data):
@@ -120,7 +235,7 @@ def _coerce_to_bytes(data):
 
 
 def dump_response(
-    response, request_prefix=b"< ", response_prefix=b"> ", data_array=None
+    response, data, boundary, response_body_filter=None, request_headers_mask=None,
 ):
     """Dump a single request-response cycle's information.
 
@@ -151,19 +266,65 @@ def dump_response(
     :returns: Formatted bytes of request and response information.
     :rtype: :class:`bytearray`
     """
-    data = data_array if data_array is not None else bytearray()
-    prefixes = PrefixSettings(request_prefix, response_prefix)
+    prefixes = PrefixSettings(b"", b"")
 
     if not hasattr(response, "request"):
         raise ValueError("Response has no associated request")
 
     proxy_info = _get_proxy_information(response)
-    _dump_request_data(response.request, prefixes, data, proxy_info=proxy_info)
-    _dump_response_data(response, prefixes, data)
+    _dump_request_data(
+        response.request,
+        prefixes,
+        data,
+        boundary,
+        proxy_info=proxy_info,
+        request_headers_mask=request_headers_mask,
+    )
+    _dump_response_data(
+        response, prefixes, data, boundary, response_body_filter=response_body_filter
+    )
     return data
 
 
-def dump_all(response, request_prefix=b"< ", response_prefix=b"> "):
+def dump_request(request, data: bytearray, boundary: str, request_headers_mask=None):
+    _dump_request_data(
+        request,
+        PrefixSettings(b"", b""),
+        data,
+        boundary,
+        proxy_info=None,
+        request_headers_mask=request_headers_mask,
+    )
+    return data
+
+
+def dump_response_exception(data: bytearray, boundary: str, reason: str):
+    _write_boundary(data, boundary, "response")
+    data.extend(b"<< " + _coerce_to_bytes(reason) + b" >>" + b"\r\n")
+
+
+def dump_timing_hint(data: bytearray, boundary: str, hint: str):
+    _write_boundary(data, boundary, "timing-hint")
+    data.extend(b"<< " + _coerce_to_bytes(hint) + b" >>" + b"\r\n")
+
+
+def dump_header(data: bytearray, boundary: str):
+    data.extend(
+        _coerce_to_bytes(
+            'Content-Type: multipart/mixed; boundary="{}"'.format(boundary)
+        )
+        + b"\r\n"
+        + b"\r\n"
+    )
+
+
+def dump_all(
+    response,
+    data: bytearray,
+    boundary: str,
+    response_body_filter=None,
+    request_headers_mask=None,
+):
     """Dump all requests and responses including redirects.
 
     This takes the response returned by requests and will dump all
@@ -191,12 +352,17 @@ def dump_all(response, request_prefix=b"< ", response_prefix=b"> "):
     :returns: Formatted bytes of request and response information.
     :rtype: :class:`bytearray`
     """
-    data = bytearray()
 
     history = list(response.history[:])
     history.append(response)
 
     for response in history:
-        dump_response(response, request_prefix, response_prefix, data)
+        dump_response(
+            response,
+            data,
+            boundary,
+            response_body_filter=response_body_filter,
+            request_headers_mask=request_headers_mask,
+        )
 
     return data
