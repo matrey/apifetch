@@ -1,6 +1,6 @@
 # apifetch
 
-Extra features on top of requests:
+Extra features on top of Python `requests`:
  * hard timeout on total time
  * retries, with exponential backoff
  * log raw request and response, mask confidential values
@@ -29,9 +29,22 @@ So, we have to implement a hard timeout externally.
 
 ### How to implement the equivalent of `timeout -s KILL` in Python 3?
 
-Unfortunately, `eventlet.Timeout` stopped working with Python 3.7 (raises a `RecursionError`,
+Previously I would have used `eventlet.Timeout`, e.g.
+
+```
+import eventlet
+eventlet.monkey_patch(socket=True)
+
+with eventlet.Timeout(...):
+    ...
+
+```
+
+But it stopped working with Python 3.7 (raises a `RecursionError`,
 or `TypeError: wrap_socket() got an unexpected keyword argument '_context'`).
+
 You can track for instance this issue: https://github.com/eventlet/eventlet/issues/526
+
 
 Thanks to https://stackoverflow.com/a/22156618/8046487 a signal-based alternative
 seems to be working well. Note the caveats though:
