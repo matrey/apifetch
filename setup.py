@@ -1,5 +1,5 @@
 from setuptools import setup, find_packages
-  
+
 setup(
     name="apifetch",  # Required
     version="0.1.0",  # Required
@@ -31,6 +31,5 @@ setup(
     #
     packages=find_packages(exclude=["contrib", "docs", "tests"]),  # Required
     python_requires=">=3.7",
-    install_requires=["requests","cchardet"],
+    install_requires=["requests", "cchardet"],
 )
-

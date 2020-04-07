@@ -40,4 +40,3 @@ def get_xml(r: Response):
         return ElementTree.fromstring(r.text)
     except Exception as e:
         raise InvalidResponse("Payload is not valid XML! " + str(e))
-

@@ -91,7 +91,7 @@ class HeaderFilter(object):
             )
 
         self.stack.append(fn)
-        
+
         return self
 
 
