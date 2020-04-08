@@ -13,7 +13,7 @@ from .request import RequestStrategy, SignalTimeout
 
 # Monkey-patch requests to have it use cchardet instead of chardet
 # cf https://github.com/psf/requests/issues/2359#issuecomment-552736992
-class ForceCchardet():
+class ForceCchardet:
     @property
     def apparent_encoding(obj):
         return cchardet.detect(obj.content)["encoding"]
