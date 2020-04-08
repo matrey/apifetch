@@ -1,7 +1,7 @@
 import logging
 import math
 import time
-import urllib
+import urllib.parse
 
 import cchardet
 import requests
@@ -13,13 +13,13 @@ from .request import RequestStrategy, SignalTimeout
 
 # Monkey-patch requests to have it use cchardet instead of chardet
 # cf https://github.com/psf/requests/issues/2359#issuecomment-552736992
-class ForceCchardet:
+class ForceCchardet():
     @property
     def apparent_encoding(obj):
         return cchardet.detect(obj.content)["encoding"]
 
 
-requests.Response.apparent_encoding = ForceCchardet.apparent_encoding
+requests.Response.apparent_encoding = ForceCchardet.apparent_encoding  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ def request_url(method, url, strategy: RequestStrategy, log: LogStrategy, **kwar
 
         tries += 1
         try:
-            new_kill_timeout = strategy.kill_timeout
+            new_kill_timeout = strategy.kill_timeout_s
             if strategy.total_time:
                 max_time_left = strategy.total_time - (time.perf_counter() - start_ts)
                 if max_time_left <= 0:
@@ -71,7 +71,9 @@ def request_url(method, url, strategy: RequestStrategy, log: LogStrategy, **kwar
                         )
                     )
                 # set a kill timeout as the min between the explicit kill timeout (if any) and max time left (if any)
-                new_kill_timeout = math.ceil(min(max_time_left, strategy.kill_timeout))
+                new_kill_timeout = math.ceil(
+                    min(max_time_left, strategy.kill_timeout_s)
+                )
 
             logger.debug("Try #{} (of {} maximum)".format(tries, strategy.tries))
             r = _request_url_once(
@@ -143,8 +145,8 @@ def _request_url_once(  # allow to override the kill timeout (to fit in max tota
         kwargs.setdefault("allow_redirects", False)
 
     kwargs["timeout"] = (
-        strategy.connect_timeout,
-        strategy.read_timeout,
+        strategy.connect_timeout_s,
+        strategy.read_timeout_s,
     )
 
     # We will use a prepared request, to be able to log the raw request even if
@@ -179,7 +181,7 @@ def _request_url_once(  # allow to override the kill timeout (to fit in max tota
     kill_timeout = (
         override_kill_timeout
         if override_kill_timeout is not None
-        else strategy.kill_timeout
+        else strategy.kill_timeout_s
     )
     try:
         with SignalTimeout(kill_timeout):

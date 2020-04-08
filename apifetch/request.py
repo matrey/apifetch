@@ -1,6 +1,7 @@
 import abc
 import signal
 import time
+from typing import List
 
 
 class RateLimiterInterface(metaclass=abc.ABCMeta):
@@ -25,37 +26,37 @@ class RequestStrategy(object):
 
     # In case you need to consider some code(s) between 400 and 599 as
     # "normal" (e.g. for API calls returning empty response as 404)
-    normal_codes = []
+    normal_codes: List[str] = []
 
     # In case some codes should not be retried (e.g. a 401 or 403 is
     # unlikely to get better after a retry).
     # "DDx" and "Dxx" patterns (e.g. "4xx", "40x") are acceptable.
-    fatal_codes = []
+    fatal_codes: List[str] = []
 
     backoff_exp = 2
     backoff_mul = 0.5  # with exponent 2, gives: 1, 2, 4, 8, 16, etc.
 
     rate_limiter = None
 
-    connect_timeout = -1
-    read_timeout = -1
-    kill_timeout = -1
+    connect_timeout_s = 0.0
+    read_timeout_s = 0.0
+    kill_timeout_s = 0
 
     def __init__(self, connect_timeout: float, read_timeout: float, kill_timeout: int):
-        self.connect_timeout = connect_timeout
-        self.read_timeout = read_timeout
-        self.kill_timeout = kill_timeout
+        self.connect_timeout_s = connect_timeout
+        self.read_timeout_s = read_timeout
+        self.kill_timeout_s = kill_timeout
 
     def connect_timeout(self, connect_timeout: float):
-        self.connect_timeout = connect_timeout
+        self.connect_timeout_s = connect_timeout
         return self
 
     def read_timeout(self, read_timeout: float):
-        self.read_timeout = read_timeout
+        self.read_timeout_s = read_timeout
         return self
 
     def kill_timeout(self, kill_timeout: int):
-        self.kill_timeout = kill_timeout
+        self.kill_timeout_s = kill_timeout
         return self
 
     def max_tries(self, tries: int):
@@ -88,7 +89,7 @@ class RequestStrategy(object):
         self.backoff_exp = exponent
         return self
 
-    def rate_limiter(self, limiter: RateLimiterInterface):
+    def rate_limit(self, limiter: RateLimiterInterface):
         self.rate_limiter = limiter
         return self
 
@@ -135,6 +136,7 @@ class SignalTimeout:
     class SignalTimeoutException(Exception):
         pass
 
+    @staticmethod
     def _timeout(signum, frame):
         raise SignalTimeout.SignalTimeoutException()
 

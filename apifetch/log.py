@@ -6,6 +6,7 @@ import base64
 import secrets
 import time
 from datetime import datetime
+from typing import Callable, List
 
 from requests import compat
 
@@ -23,7 +24,7 @@ class Timer(object):
 class HeaderFilter(object):
     # TODO: cookie
 
-    stack = []
+    stack: List[Callable] = []
 
     def mask_by_name(self, header_name, show_first_chars=None):
         def fn(name, value):
@@ -107,8 +108,8 @@ class LogStrategy(object):
     response_body_filter = None
 
     sampling = 1
-    bytearr = None
-    boundary = None
+    bytearr: bytearray
+    boundary: str
 
     save_func = None
 
