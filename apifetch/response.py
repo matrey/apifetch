@@ -1,5 +1,7 @@
 import binascii
 
+from requests.models import Response
+
 from .exceptions import InvalidResponse
 
 
