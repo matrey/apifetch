@@ -3,9 +3,9 @@
 # Licensed under the Apache License, Version 2.0
 
 import base64
+import secrets
 import time
 from datetime import datetime
-import secrets
 
 from requests import compat
 

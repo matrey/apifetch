@@ -1,6 +1,6 @@
 import abc
-import time
 import signal
+import time
 
 
 class RateLimiterInterface(metaclass=abc.ABCMeta):

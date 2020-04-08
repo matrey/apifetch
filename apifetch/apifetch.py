@@ -1,12 +1,15 @@
-import requests
-import cchardet
-import urllib
 import logging
-import time
 import math
-from .request import RequestStrategy, SignalTimeout
-from .log import LogStrategy, Timer
+import time
+import urllib
+
+import cchardet
+import requests
+
 from .exceptions import RequestFailure, RequestTimeout
+from .log import LogStrategy, Timer
+from .request import RequestStrategy, SignalTimeout
+
 
 # Monkey-patch requests to have it use cchardet instead of chardet
 # cf https://github.com/psf/requests/issues/2359#issuecomment-552736992

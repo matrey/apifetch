@@ -1,4 +1,5 @@
 import binascii
+
 from .exceptions import InvalidResponse
 
 
