@@ -26,12 +26,12 @@ class RequestStrategy(object):
 
     # In case you need to consider some code(s) between 400 and 599 as
     # "normal" (e.g. for API calls returning empty response as 404)
-    normal_codes: List[str] = []
+    normal_codes: List[str]
 
     # In case some codes should not be retried (e.g. a 401 or 403 is
     # unlikely to get better after a retry).
     # "DDx" and "Dxx" patterns (e.g. "4xx", "40x") are acceptable.
-    fatal_codes: List[str] = []
+    fatal_codes: List[str]
 
     backoff_exp = 2
     backoff_mul = 0.5  # with exponent 2, gives: 1, 2, 4, 8, 16, etc.
@@ -46,6 +46,8 @@ class RequestStrategy(object):
         self.connect_timeout_s = connect_timeout
         self.read_timeout_s = read_timeout
         self.kill_timeout_s = kill_timeout
+        self.normal_codes = []
+        self.fatal_codes = []
 
     def connect_timeout(self, connect_timeout: float):
         self.connect_timeout_s = connect_timeout
@@ -95,6 +97,10 @@ class RequestStrategy(object):
 
 
 class LocalGCRA(RateLimiterInterface):
+
+    limit: float
+    emission_interval: float
+
     def __init__(self, emission_interval):
         # emission interval = period of time / rate
         # (e.g. 10 per minute = 60 / 10 = emission interval of 6s

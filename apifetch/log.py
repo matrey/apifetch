@@ -24,7 +24,10 @@ class Timer(object):
 class HeaderFilter(object):
     # TODO: cookie
 
-    stack: List[Callable] = []
+    stack: List[Callable]
+
+    def __init__(self):
+        self.stack = []
 
     def mask_by_name(self, header_name, show_first_chars=None):
         def fn(name, value):
