@@ -3,6 +3,7 @@
 # Licensed under the Apache License, Version 2.0
 
 import base64
+import json
 import secrets
 import time
 from datetime import datetime
@@ -14,10 +15,10 @@ from requests import compat
 class Timer(object):
     def start(self):
         self._start_ts = time.perf_counter()
-        self.start_date = datetime.utcnow()
+        self.start_date = datetime.utcnow().isoformat() + "Z"
 
     def stop(self):
-        self.end_date = datetime.utcnow()
+        self.end_date = datetime.utcnow().isoformat() + "Z"
         self.total_time_s = time.perf_counter() - self._start_ts
 
 
@@ -114,6 +115,8 @@ class LogStrategy(object):
     bytearr: bytearray
     boundary: str
 
+    counter: int
+
     save_func = None
 
     def __init__(self, sampling: int = 1):
@@ -124,11 +127,11 @@ class LogStrategy(object):
 
         self.bytearr.extend(
             self.coerce_to_bytes(
-                'Content-Type: multipart/mixed; boundary="{}"'.format(self.boundary)
+                'Content-Type: multipart/mixed; boundary="{}"\n\n'.format(self.boundary)
             )
-            + b"\r\n"
-            + b"\r\n"
         )
+
+        self.counter = 0
 
     def to_file(self, filepath):
         f = open(filepath, "wb")
@@ -169,7 +172,7 @@ class LogStrategy(object):
                 else reason
             )
             + b" >>"
-            + b"\r\n"
+            + b"\n"
         )
         if timing:
             self._dump_timer(timing)
@@ -190,16 +193,29 @@ class LogStrategy(object):
         if timing:
             self._dump_timer(timing)
 
-    def _write_boundary(self, type=None):
-        self.bytearr.extend(
-            self.coerce_to_bytes("--%s\r\n" % self.boundary)
-            + (
-                self.coerce_to_bytes('X-Type: "%s"\r\n' % type)
-                if type is not None
-                else b""
+    def _write_boundary(self, x_type: str, content_type: str = None):
+        self.counter += 1
+        lines = []
+        lines.append("--{}".format(self.boundary))
+        lines.append("X-Type: {}".format(x_type))
+        lines.append(
+            "Content-Type: {}".format(
+                content_type if content_type else "text/plain; charset=utf-8"
             )
-            + b"\r\n"
         )
+        lines.append(
+            'Content-Disposition: inline; filename="{}"'.format(
+                str(self.counter).rjust(4, "0") + "." + x_type + ".log"
+            )
+        )
+
+        self.bytearr.extend(
+            self.coerce_to_bytes("\n".join(lines)) + b"\n"
+        )  # because "join" will not add a trailing LF
+        self.bytearr.extend(b"\n")
+
+    def _write_closing_boundary(self):
+        self.bytearr.extend(self.coerce_to_bytes("--{}--\n".format(self.boundary)))
 
     def _write_headers(self, headers, header_filter=None):
         for name, value in headers.items():
@@ -282,7 +298,7 @@ class LogStrategy(object):
                 # In the event that the body is a file-like object, let's not try
                 # to read everything into memory.
                 self.bytearr.extend(b"<< Request body is not a string-like type >>")
-        self.bytearr.extend(b"\r\n")
+        self.bytearr.extend(b"\n")
 
     def _dump_response_data(self, response):
         # Let's interact almost entirely with urllib3's response
@@ -321,7 +337,7 @@ class LogStrategy(object):
         else:
             # TODO: body filter
             self.bytearr.extend(response.content)
-        self.bytearr.extend(b"\r\n")
+        self.bytearr.extend(b"\n")
 
     def _dump_one(self, response):
         """Dump a single request-response cycle's information.
@@ -341,14 +357,10 @@ class LogStrategy(object):
         self._dump_response_data(response)
 
     def _dump_timer(self, timing: Timer):
-        self._write_boundary("timing-hint")
-        self.bytearr.extend(
-            b"<< "
-            + self.coerce_to_bytes(
-                "Request sent at {} ; response received (or timed out) at {} ; time elapsed (s): {}".format(
-                    timing.start_date, timing.end_date, timing.total_time_s
-                )
-            )
-            + b" >>"
-            + b"\r\n"
-        )
+        self._write_boundary("timing-hint", "application/json")
+        data = {
+            "sentAt": timing.start_date,
+            "receivedAt": timing.end_date,
+            "totalTime": timing.total_time_s,
+        }
+        self.bytearr.extend(self.coerce_to_bytes(json.dumps(data)) + b"\n")
