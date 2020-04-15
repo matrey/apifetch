@@ -1,7 +1,7 @@
 import abc
 import signal
 import time
-from typing import List
+from typing import List, Tuple
 
 
 class RateLimiterInterface(metaclass=abc.ABCMeta):
@@ -14,8 +14,9 @@ class RateLimiterInterface(metaclass=abc.ABCMeta):
         )
 
     @abc.abstractmethod
-    def is_rejected(self):
-        """Load in the data set"""
+    def is_rejected(self) -> Tuple[bool, float]:
+        # If [0] is False, go ahead
+        # If [0] is True, sleep for [1] seconds
         raise NotImplementedError
 
 
@@ -108,7 +109,7 @@ class LocalGCRA(RateLimiterInterface):
         self.limit = None
         self.emission_interval = emission_interval
 
-    def is_rejected(self):
+    def is_rejected(self) -> Tuple[bool, float]:
 
         ts = time.time()
         jan_1_2020 = 1577836800

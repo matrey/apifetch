@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="apifetch",  # Required
-    version="0.1.0",  # Required
+    version="0.2.0",  # Required
     classifiers=[  # Optional
         # How mature is this project? Common values are
         #   3 - Alpha

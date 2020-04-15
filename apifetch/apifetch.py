@@ -1,3 +1,4 @@
+import abc
 import logging
 import math
 import time
@@ -8,7 +9,7 @@ import requests
 
 from .exceptions import RequestFailure, RequestTimeout
 from .log import LogStrategy, Timer
-from .request import RequestStrategy, SignalTimeout
+from .request import RateLimiterInterface, RequestStrategy, SignalTimeout
 
 
 # Monkey-patch requests to have it use cchardet instead of chardet
@@ -21,192 +22,304 @@ class ForceCchardet:
 
 requests.Response.apparent_encoding = ForceCchardet.apparent_encoding  # type: ignore
 
-logger = logging.getLogger(__name__)
 
+class Fetcher(object):
 
-def get(url, **kwargs):
-    return request_url("get", url, **kwargs)
+    strategy: RequestStrategy
+    log: LogStrategy
+    rate_limiter: RateLimiterInterface
+    logger: logging.Logger
 
+    def __init__(
+        self,
+        strategy: RequestStrategy,
+        log: LogStrategy,
+        rate_limiter: RateLimiterInterface = None,
+    ):
+        self.strategy = strategy
+        self.log = log
+        if rate_limiter:
+            self.rate_limiter = rate_limiter
+        self.logger = logging.getLogger(__name__)
 
-def post(url, **kwargs):
-    return request_url("post", url, **kwargs)
+    def get(self, url, **kwargs):
+        return self.request_url("get", url, **kwargs)
 
+    def post(self, url, **kwargs):
+        return self.request_url("post", url, **kwargs)
 
-def request_url(method, url, strategy: RequestStrategy, log: LogStrategy, **kwargs):
+    def request_url(self, method, url, **kwargs):
 
-    tries = 0
-    start_ts = time.perf_counter()
-    while tries < strategy.tries:
+        tries = 0
+        start_ts = time.perf_counter()
+        while tries < self.strategy.tries:
 
-        # Exponential backoff sleep (need to explicitly skip it the first time, as otherwise x^0 = 1)
-        if tries > 0:
-            to_sleep = strategy.backoff_mul * strategy.backoff_exp ** tries
-            # Quick check to ensure we won't already be timed out when finished sleeping
-            if (
-                strategy.total_time
-                and strategy.total_time - (time.perf_counter() - start_ts) - to_sleep
-                <= 0
-            ):
-                raise RequestFailure(
-                    "Total timeout of {} seconds would get reached after exponential backoff".format(
-                        strategy.total_time
-                    )
+            # Exponential backoff sleep (need to explicitly skip it the first time, as otherwise x^0 = 1)
+            if tries > 0:
+                to_sleep = (
+                    self.strategy.backoff_mul * self.strategy.backoff_exp ** tries
                 )
-            logger.debug(
-                "Try #{} failed, sleeping {} seconds before retry.".format(
-                    tries, to_sleep
-                )
-            )
-            time.sleep(to_sleep)
-
-        tries += 1
-        try:
-            new_kill_timeout = strategy.kill_timeout_s
-            if strategy.total_time:
-                max_time_left = strategy.total_time - (time.perf_counter() - start_ts)
-                if max_time_left <= 0:
+                # Quick check to ensure we won't already be timed out when finished sleeping
+                if (
+                    self.strategy.total_time
+                    and self.strategy.total_time
+                    - (time.perf_counter() - start_ts)
+                    - to_sleep
+                    <= 0
+                ):
                     raise RequestFailure(
-                        "Total timeout of {} seconds reached".format(
-                            strategy.total_time
+                        "Total timeout of {} seconds would get reached after exponential backoff".format(
+                            self.strategy.total_time
                         )
                     )
-                # set a kill timeout as the min between the explicit kill timeout (if any) and max time left (if any)
-                new_kill_timeout = math.ceil(
-                    min(max_time_left, strategy.kill_timeout_s)
+                self.logger.debug(
+                    "Try #{} failed, sleeping {} seconds before retry.".format(
+                        tries, to_sleep
+                    )
                 )
+                time.sleep(to_sleep)
 
-            logger.debug("Try #{} (of {} maximum)".format(tries, strategy.tries))
-            r = _request_url_once(
-                method,
-                url,
-                strategy,
-                log,
-                override_kill_timeout=new_kill_timeout,
-                **kwargs
-            )
-        except RequestFailure:
-            raise  # Game over, no time left
-        except (RequestTimeout, requests.exceptions.RequestException) as e:
-            logger.debug("Request exception (%s): %s", type(e).__name__, str(e))
-            # Low level error, e.g. connection error, socket error, etc. --> retryable
-            # Could also be a override_kill_timeout reached --> it will get intercepted when re-entering the loop
-            continue  # retry
+            tries += 1
+            try:
+                new_kill_timeout = self.strategy.kill_timeout_s
+                if self.strategy.total_time:
+                    max_time_left = self.strategy.total_time - (
+                        time.perf_counter() - start_ts
+                    )
+                    if max_time_left <= 0:
+                        raise RequestFailure(
+                            "Total timeout of {} seconds reached".format(
+                                self.strategy.total_time
+                            )
+                        )
+                    # set a kill timeout as the min between the explicit kill timeout (if any) and max time left (if any)
+                    new_kill_timeout = math.ceil(
+                        min(max_time_left, self.strategy.kill_timeout_s)
+                    )
 
-        if not isinstance(r, requests.Response) or not r.status_code:
-            # TODO: log the case, as it is weird
-            logger.info("Response has unexpected type {}".format(type(r).__name__))
-            continue  # retry
+                # Apply rate limiter (if any). Note that in the case of a "shared" rate limiter, it's not guaranteed to be OK even after "retry after"
+                # TODO: it should be "retry after", not "go ahead after"
+                if self.rate_limiter is not None:
+                    res = self.rate_limiter.is_rejected()
+                    if res[0] is True:
+                        # We have to wait (retry after res[1] seconds)
+                        # Quick check to ensure we won't already be timed out when finished sleeping
+                        if (
+                            self.strategy.total_time
+                            and self.strategy.total_time
+                            - (time.perf_counter() - start_ts)
+                            - res[1]
+                            <= 0
+                        ):
+                            raise RequestFailure(
+                                "Total timeout of {} seconds would get reached after rate limiter Retry-After value of {}".format(
+                                    self.strategy.total_time, res[1]
+                                )
+                            )
+                        self.logger.debug(
+                            "Rate limiting, sleeping {} seconds before retry.".format(
+                                res[1]
+                            )
+                        )
+                        time.sleep(
+                            res[1] + 50 / 1000
+                        )  # Add 50ms of padding: TODO should be externalized, 50ms can be huge in some contexts
 
-        # If we are here, we have a response, but it could be an HTTP error (500, etc.)
-        # 2 special cases:
-        # * normal codes: codes in the 400..599 range that actually mean a success
-        # * fatal codes: codes that should not be re-tried
-        if (
-            r.status_code >= 400
-            and r.status_code < 600
-            and str(r.status_code) not in strategy.normal_codes
-        ):  # in the error range
-            if (
-                str(r.status_code) in strategy.fatal_codes
-                or str(r.status_code)[0:2] + "x" in strategy.fatal_codes
-                or str(r.status_code)[0:1] + "xx" in strategy.fatal_codes
-            ):
-                # Fatal, do not retry
-                r.raise_for_status()
-            else:
+                self.logger.debug(
+                    "Try #{} (of {} maximum)".format(tries, self.strategy.tries)
+                )
+                r = self._request_url_once(
+                    method,
+                    url,
+                    self.strategy,
+                    self.log,
+                    override_kill_timeout=new_kill_timeout,
+                    **kwargs
+                )
+            except RequestFailure:
+                raise  # Game over, no time left
+            except (RequestTimeout, requests.exceptions.RequestException) as e:
+                self.logger.debug(
+                    "Request exception (%s): %s", type(e).__name__, str(e)
+                )
+                # Low level error, e.g. connection error, socket error, etc. --> retryable
+                # Could also be a override_kill_timeout reached --> it will get intercepted when re-entering the loop
                 continue  # retry
 
-        # Success: we return the response for further processing
-        return r
+            if not isinstance(r, requests.Response) or not r.status_code:
+                # TODO: log the case, as it is weird
+                self.logger.info(
+                    "Response has unexpected type {}".format(type(r).__name__)
+                )
+                continue  # retry
 
-    # If we end up here, it means we reached the maximum number of tries
-    raise RequestFailure("Request failed (total: {} tries)".format(strategy.tries))
+            # If we are here, we have a response, but it could be an HTTP error (500, etc.)
+            # 2 special cases:
+            # * normal codes: codes in the 400..599 range that actually mean a success
+            # * fatal codes: codes that should not be re-tried
+            if (
+                r.status_code >= 400
+                and r.status_code < 600
+                and str(r.status_code) not in self.strategy.normal_codes
+            ):  # in the error range
+                if (
+                    str(r.status_code) in self.strategy.fatal_codes
+                    or str(r.status_code)[0:2] + "x" in self.strategy.fatal_codes
+                    or str(r.status_code)[0:1] + "xx" in self.strategy.fatal_codes
+                ):
+                    # Fatal, do not retry
+                    r.raise_for_status()
+                else:
+                    continue  # retry
 
+            # Success: we return the response for further processing
+            return r
 
-def _request_url_once(  # allow to override the kill timeout (to fit in max total time)
-    method,
-    url,
-    strategy: RequestStrategy,
-    log: LogStrategy,
-    override_kill_timeout=None,
-    params=None,
-    **kwargs
-):
-    is_logged = log is not None
+        # If we end up here, it means we reached the maximum number of tries
+        raise RequestFailure(
+            "Request failed (total: {} tries)".format(self.strategy.tries)
+        )
 
-    # In the query string, avoid spaces becoming "+" (want "%20" instead)
-    if params:
-        kwargs["params"] = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
+    @staticmethod
+    def _request_url_once(  # allow to override the kill timeout (to fit in max total time)
+        method,
+        url,
+        strategy: RequestStrategy,
+        log: LogStrategy,
+        override_kill_timeout=None,
+        params=None,
+        **kwargs
+    ):
+        is_logged = log is not None
 
-    # Replicating defaults from https://github.com/psf/requests/blob/master/requests/api.py
-    if method == "get" or method == "options":
-        kwargs.setdefault("allow_redirects", True)
-    elif method == "head":
-        kwargs.setdefault("allow_redirects", False)
+        # In the query string, avoid spaces becoming "+" (want "%20" instead)
+        if params:
+            kwargs["params"] = urllib.parse.urlencode(
+                params, quote_via=urllib.parse.quote
+            )
 
-    kwargs["timeout"] = (
-        strategy.connect_timeout_s,
-        strategy.read_timeout_s,
-    )
+        # Replicating defaults from https://github.com/psf/requests/blob/master/requests/api.py
+        if method == "get" or method == "options":
+            kwargs.setdefault("allow_redirects", True)
+        elif method == "head":
+            kwargs.setdefault("allow_redirects", False)
 
-    # We will use a prepared request, to be able to log the raw request even if
-    # we do not get a response (e.g. hard timeout or exception)
+        kwargs["timeout"] = (
+            strategy.connect_timeout_s,
+            strategy.read_timeout_s,
+        )
 
-    # We need to split kwargs in 2, one for the prepared request, the rest for sending
-    kwargs_req = {}
-    for k, v in kwargs.items():
-        # From https://github.com/psf/requests/blob/428f7a275914f60a8f1e76a7d69516d617433d30/requests/models.py#L254
-        if k in [
-            "method",
-            "url",
-            "headers",
-            "files",
-            "data",
-            "json",
-            "params",
-            "auth",
-            "cookies",
-            "hooks",
-        ]:
-            kwargs_req.update({k: v})
-    for k, v in kwargs_req.items():
-        kwargs.pop(k, None)
+        # We will use a prepared request, to be able to log the raw request even if
+        # we do not get a response (e.g. hard timeout or exception)
 
-    s = requests.Session()
-    req = requests.Request(method.upper(), url, **kwargs_req)
-    prepped = s.prepare_request(req)
+        # We need to split kwargs in 2, one for the prepared request, the rest for sending
+        kwargs_req = {}
+        for k, v in kwargs.items():
+            # From https://github.com/psf/requests/blob/428f7a275914f60a8f1e76a7d69516d617433d30/requests/models.py#L254
+            if k in [
+                "method",
+                "url",
+                "headers",
+                "files",
+                "data",
+                "json",
+                "params",
+                "auth",
+                "cookies",
+                "hooks",
+            ]:
+                kwargs_req.update({k: v})
+        for k, v in kwargs_req.items():
+            kwargs.pop(k, None)
 
-    timed_out = True
-    r = None
-    kill_timeout = (
-        override_kill_timeout
-        if override_kill_timeout is not None
-        else strategy.kill_timeout_s
-    )
-    try:
-        with SignalTimeout(kill_timeout):
+        s = requests.Session()
+        req = requests.Request(method.upper(), url, **kwargs_req)
+        prepped = s.prepare_request(req)
+
+        timed_out = True
+        r = None
+        kill_timeout = (
+            override_kill_timeout
+            if override_kill_timeout is not None
+            else strategy.kill_timeout_s
+        )
+        try:
+            with SignalTimeout(kill_timeout):
+                if is_logged:
+                    timer = Timer()
+                    timer.start()
+
+                r = s.send(prepped, **kwargs)
+
+                # If we arrive here, it means we didn't reach the timeout.
+                # We have to flag this fact explicitly
+                timed_out = False
+
+            if timed_out and r is None:
+                raise RequestTimeout("Killed on timeout ({}s)".format(kill_timeout))
+
+        except Exception as e:
+            # If we are here, it means the request failed (no response), we log the request
             if is_logged:
-                timer = Timer()
-                timer.start()
+                timer.stop()
+                log.dump_failed(request=prepped, exception=e, timing=timer)
+            raise
 
-            r = s.send(prepped, **kwargs)
-
-            # If we arrive here, it means we didn't reach the timeout.
-            # We have to flag this fact explicitly
-            timed_out = False
-
-        if timed_out and r is None:
-            raise RequestTimeout("Killed on timeout ({}s)".format(kill_timeout))
-
-    except Exception as e:
-        # If we are here, it means the request failed (no response), we log the request
         if is_logged:
             timer.stop()
-            log.dump_failed(request=prepped, exception=e, timing=timer)
-        raise
+            log.dump(response=r, timing=timer)
 
-    if is_logged:
-        timer.stop()
-        log.dump(response=r, timing=timer)
+        return r
 
-    return r
+
+class PaginatorInterface(metaclass=abc.ABCMeta):
+    @abc.abstractmethod
+    def reset(self):
+        pass
+
+    @abc.abstractmethod
+    def alter_request_params(self, reqp: dict) -> dict:
+        pass
+
+    @abc.abstractmethod
+    def inspect_response(self, res) -> None:
+        pass
+
+    @abc.abstractmethod
+    def has_more(self) -> bool:
+        pass
+
+
+class PaginatedFetcher(object):
+
+    fetcher: Fetcher
+    pager: PaginatorInterface
+
+    def __init__(
+        self,
+        strategy: RequestStrategy,
+        log: LogStrategy,
+        pager: PaginatorInterface,
+        rate_limiter: RateLimiterInterface = None,
+    ):
+        self.fetcher = Fetcher(strategy, log, rate_limiter)
+        self.pager = pager
+
+    def get(self, url, **kwargs):
+        return self.request_url("get", url, **kwargs)
+
+    def post(self, url, **kwargs):
+        return self.request_url("post", url, **kwargs)
+
+    def request_url(self, method, url, **kwargs):  # generator function
+
+        self.pager.reset()
+
+        kwargs["method"] = method
+        kwargs["url"] = url
+
+        while self.pager.has_more():
+            newargs = self.pager.alter_request_params(kwargs)
+            res = self.fetcher.request_url(**newargs)
+            self.pager.inspect_response(res)
+            yield res
