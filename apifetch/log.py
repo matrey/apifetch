@@ -30,7 +30,7 @@ class HeaderFilter(object):
         self.stack = []
 
     def mask_by_name(self, header_name, show_first_chars=None):
-        def fn(name, value):
+        def fn(name, value, header_name=header_name):
             return (
                 name,
                 value

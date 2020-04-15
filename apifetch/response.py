@@ -1,8 +1,26 @@
 import binascii
 
 from requests.models import Response
+from requests.utils import parse_header_links
 
 from .exceptions import InvalidResponse
+
+
+def get_header_links(r: Response, rel=None):  # for REST API pagination
+    try:
+        rels = parse_header_links(r.headers.get("link"))
+        if rel is None:
+            return rels
+        for d in rels:
+            currel = d.get("rel", None)
+            if currel == rel:
+                return d.get("url", None)
+        return None
+    except Exception:
+        if rel is None:
+            return []
+        else:
+            return None
 
 
 def get_jpeg(r: Response):
