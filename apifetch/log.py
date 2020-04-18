@@ -105,7 +105,7 @@ class BodyFilter(object):
     pass
 
 
-class LogStrategy(object):
+class RawLogger(object):
 
     request_header_filter = None
     response_header_filter = None
@@ -119,9 +119,7 @@ class LogStrategy(object):
 
     save_func = None
 
-    def __init__(self, sampling: int = 1):
-        self.sampling = sampling  # TODO: use the sampling
-
+    def reset(self):
         self.bytearr = bytearray()
         self.boundary = "rawtrace.{}.{}".format(int(time.time()), secrets.token_hex(16))
 
@@ -133,13 +131,17 @@ class LogStrategy(object):
 
         self.counter = 0
 
+    def __init__(self, sampling: int = 1):
+        self.sampling = sampling  # TODO: use the sampling
+
+        self.reset()
+
     def to_file(self, filepath):
+        self._write_closing_boundary()
         f = open(filepath, "wb")
         f.write(self.bytearr)
         f.close()
-
-    def to_bytearray(self):
-        return self.bytearr
+        self.reset()
 
     def with_request_header_filter(self, header_filter: HeaderFilter):
         self.request_header_filter = header_filter
@@ -205,7 +207,12 @@ class LogStrategy(object):
         )
         lines.append(
             'Content-Disposition: inline; filename="{}"'.format(
-                str(self.counter).rjust(4, "0") + "." + x_type + ".log"
+                self.boundary
+                + "."
+                + str(self.counter).rjust(4, "0")
+                + "."
+                + x_type
+                + ".log"
             )
         )
 

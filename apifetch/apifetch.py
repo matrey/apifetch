@@ -8,7 +8,7 @@ import cchardet
 import requests
 
 from .exceptions import RequestFailure, RequestTimeout
-from .log import LogStrategy, Timer
+from .log import RawLogger, Timer
 from .request import RateLimiterInterface, RequestStrategy, SignalTimeout
 
 
@@ -23,23 +23,17 @@ class ForceCchardet:
 requests.Response.apparent_encoding = ForceCchardet.apparent_encoding  # type: ignore
 
 
-class Fetcher(object):
+class ApiFetcher(object):
 
     strategy: RequestStrategy
-    log: LogStrategy
-    rate_limiter: RateLimiterInterface
+    log: RawLogger
     logger: logging.Logger
 
     def __init__(
-        self,
-        strategy: RequestStrategy,
-        log: LogStrategy,
-        rate_limiter: RateLimiterInterface = None,
+        self, strategy: RequestStrategy, log: RawLogger,
     ):
         self.strategy = strategy
         self.log = log
-        if rate_limiter:
-            self.rate_limiter = rate_limiter
         self.logger = logging.getLogger(__name__)
 
     def get(self, url, **kwargs):
@@ -99,8 +93,8 @@ class Fetcher(object):
 
                 # Apply rate limiter (if any). Note that in the case of a "shared" rate limiter, it's not guaranteed to be OK even after "retry after"
                 # TODO: it should be "retry after", not "go ahead after"
-                if self.rate_limiter is not None:
-                    res = self.rate_limiter.is_rejected()
+                if self.strategy.rate_limiter is not None:
+                    res = self.strategy.rate_limiter.is_rejected()
                     if res[0] is True:
                         # We have to wait (retry after res[1] seconds)
                         # Quick check to ensure we won't already be timed out when finished sleeping
@@ -185,7 +179,7 @@ class Fetcher(object):
         method,
         url,
         strategy: RequestStrategy,
-        log: LogStrategy,
+        log: RawLogger,
         override_kill_timeout=None,
         params=None,
         **kwargs
@@ -290,26 +284,28 @@ class PaginatorInterface(metaclass=abc.ABCMeta):
         pass
 
 
-class PaginatedFetcher(object):
-
-    fetcher: Fetcher
-    pager: PaginatorInterface
-
-    def __init__(
-        self,
-        strategy: RequestStrategy,
-        log: LogStrategy,
-        pager: PaginatorInterface,
-        rate_limiter: RateLimiterInterface = None,
-    ):
-        self.fetcher = Fetcher(strategy, log, rate_limiter)
-        self.pager = pager
-
+class FetcherGeneratorInterface(metaclass=abc.ABCMeta):
     def get(self, url, **kwargs):
         return self.request_url("get", url, **kwargs)
 
     def post(self, url, **kwargs):
         return self.request_url("post", url, **kwargs)
+
+    @abc.abstractmethod
+    def request_url(self, method, url, **kwargs):  # generator function
+        pass
+
+
+class PaginatedFetcher(FetcherGeneratorInterface):
+
+    fetcher: ApiFetcher
+    pager: PaginatorInterface
+
+    def __init__(
+        self, strategy: RequestStrategy, log: RawLogger, pager: PaginatorInterface,
+    ):
+        self.fetcher = ApiFetcher(strategy, log)
+        self.pager = pager
 
     def request_url(self, method, url, **kwargs):  # generator function
 
@@ -323,3 +319,20 @@ class PaginatedFetcher(object):
             res = self.fetcher.request_url(**newargs)
             self.pager.inspect_response(res)
             yield res
+
+
+class Fetcher(FetcherGeneratorInterface):
+
+    fetcher: ApiFetcher
+
+    def __init__(
+        self, strategy: RequestStrategy, log: RawLogger,
+    ):
+        self.fetcher = ApiFetcher(strategy, log)
+
+    def request_url(self, method, url, **kwargs):  # generator function
+
+        kwargs["method"] = method
+        kwargs["url"] = url
+
+        yield self.fetcher.request_url(**kwargs)

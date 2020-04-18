@@ -3,21 +3,7 @@ import signal
 import time
 from typing import List, Tuple
 
-
-class RateLimiterInterface(metaclass=abc.ABCMeta):
-    @classmethod
-    def __subclasshook__(cls, subclass):
-        return (
-            hasattr(subclass, "is_rejected")
-            and callable(subclass.is_rejected)
-            or NotImplemented
-        )
-
-    @abc.abstractmethod
-    def is_rejected(self) -> Tuple[bool, float]:
-        # If [0] is False, go ahead
-        # If [0] is True, sleep for [1] seconds
-        raise NotImplementedError
+from .resilience import RateLimiterInterface
 
 
 class RequestStrategy(object):
@@ -95,46 +81,6 @@ class RequestStrategy(object):
     def rate_limit(self, limiter: RateLimiterInterface):
         self.rate_limiter = limiter
         return self
-
-
-class LocalGCRA(RateLimiterInterface):
-
-    limit: float
-    emission_interval: float
-
-    def __init__(self, emission_interval):
-        # emission interval = period of time / rate
-        # (e.g. 10 per minute = 60 / 10 = emission interval of 6s
-
-        self.limit = None
-        self.emission_interval = emission_interval
-
-    def is_rejected(self) -> Tuple[bool, float]:
-
-        ts = time.time()
-        jan_1_2020 = 1577836800
-        now = ts - jan_1_2020
-
-        tat = self.limit
-        if tat is None:
-            tat = now
-
-        allow_at = max(tat, now)
-        new_tat = allow_at + self.emission_interval
-
-        diff = now - allow_at
-
-        if diff < 0:
-            return (
-                True,
-                round(-1 * diff, 2),
-            )
-        else:
-            self.limit = new_tat
-            return (
-                False,
-                -1,
-            )
 
 
 class SignalTimeout:
