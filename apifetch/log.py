@@ -3,6 +3,7 @@
 # Licensed under the Apache License, Version 2.0
 
 import base64
+import gzip
 import json
 import secrets
 import time
@@ -140,6 +141,19 @@ class RawLogger(object):
         self._write_closing_boundary()
         f = open(filepath, "wb")
         f.write(self.bytearr)
+        f.close()
+        self.reset()
+
+    def to_gz_file(self, filepath):
+        # From comments on https://stackoverflow.com/a/26753451/8046487
+        # zlib.compress is incompatible with the gzip command-line utility in that
+        # gzip includes a header and checksum, while this mechanism simply compresses
+        # the content. If you want to produce a complete gzip-compatible binary string,
+        # with the header etc, use gzip.GzipFile
+        self._write_closing_boundary()
+        f = open(filepath, "wb")
+        with gzip.GzipFile(fileobj=f, mode="w") as fgz:
+            fgz.write(self.bytearr)
         f.close()
         self.reset()
 
