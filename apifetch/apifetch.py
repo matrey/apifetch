@@ -14,6 +14,8 @@ from .request import RateLimiterInterface, RequestStrategy, SignalTimeout
 
 
 # Monkey-patch requests to have it use cchardet instead of chardet
+# (for performance / resource consumption reasons)
+# TODO: mention benchmark
 # cf https://github.com/psf/requests/issues/2359#issuecomment-552736992
 class ForceCchardet:
     @property
@@ -202,6 +204,7 @@ class ApiFetcher(object):
         is_logged = log is not None
 
         # In the query string, avoid spaces becoming "+" (want "%20" instead)
+        # (see https://bugs.python.org/issue13866 for more context)
         if params:
             kwargs["params"] = urllib.parse.urlencode(
                 params, quote_via=urllib.parse.quote
