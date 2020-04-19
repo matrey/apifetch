@@ -28,6 +28,7 @@ class ApiFetcher(object):
     strategy: RequestStrategy
     log: RawLogger
     logger: logging.Logger
+    s: requests.sessions.Session
 
     def __init__(
         self, strategy: RequestStrategy, log: RawLogger,
@@ -35,6 +36,17 @@ class ApiFetcher(object):
         self.strategy = strategy
         self.log = log
         self.logger = logging.getLogger(__name__)
+
+        # Enable connection reuse by sharing the session
+        # Thanks https://laike9m.com/blog/requests-secret-pool_connections-and-pool_maxsize,89/
+        #
+        # By default, it will keep connections to 10 hosts (pool_connections=10):
+        #   class requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10, max_retries=0, pool_block=False)
+        #
+        # Otherwise, you could explicitly tweak the parameters, e.g. like that:
+        #  self.s.mount('http://', HTTPAdapter(pool_connections=100, pool_maxsize=1))
+        #  self.s.mount('https://', HTTPAdapter(pool_connections=100, pool_maxsize=1))
+        self.s = requests.Session()
 
     def get(self, url, **kwargs):
         return self.request_url("get", url, **kwargs)
@@ -127,6 +139,7 @@ class ApiFetcher(object):
                     url,
                     self.strategy,
                     self.log,
+                    self.s,
                     override_kill_timeout=new_kill_timeout,
                     **kwargs
                 )
@@ -180,6 +193,7 @@ class ApiFetcher(object):
         url,
         strategy: RequestStrategy,
         log: RawLogger,
+        s: requests.sessions.Session,
         override_kill_timeout=None,
         params=None,
         **kwargs
@@ -226,7 +240,6 @@ class ApiFetcher(object):
         for k, v in kwargs_req.items():
             kwargs.pop(k, None)
 
-        s = requests.Session()
         req = requests.Request(method.upper(), url, **kwargs_req)
         prepped = s.prepare_request(req)
 
