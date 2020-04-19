@@ -1,9 +1,55 @@
+import abc
 import binascii
+from typing import List
 
 from requests.models import Response
 from requests.utils import parse_header_links
 
 from .exceptions import InvalidResponse
+
+
+class AbstractProcessor(metaclass=abc.ABCMeta):
+    @abc.abstractmethod
+    def process_one_response(self, res: Response) -> None:
+        pass
+
+    @abc.abstractmethod
+    def return_all_data(self):
+        pass
+
+
+class JsonListProcessor(AbstractProcessor):
+
+    data: List
+
+    def __init__(self):
+        self.data = []
+
+    def process_one_response(self, res: Response) -> None:
+        # Validate the payload is proper JSON (or raise an InvalidResponse)
+        j = get_json(res)
+
+        # Give an opportunity to mangle the whole payload, to expose a list
+        payload = self.mangle_payload(j)
+
+        for entry in payload:
+            # Extract what we are interested in
+            unit = self.process_item(entry)
+
+            if unit is not None:
+                # allows killing bad entries
+                self.data.append(unit)
+
+    def return_all_data(self):
+        return self.data
+
+    @staticmethod
+    def process_item(entry):
+        return entry
+
+    @staticmethod
+    def mangle_payload(payload):
+        return payload
 
 
 def get_header_links(r: Response, rel=None):  # for REST API pagination

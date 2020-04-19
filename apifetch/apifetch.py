@@ -9,6 +9,7 @@ import requests
 
 from .exceptions import RequestFailure, RequestTimeout
 from .log import RawLogger, Timer
+from .pagination import PaginatorInterface
 from .request import RateLimiterInterface, RequestStrategy, SignalTimeout
 
 
@@ -279,24 +280,6 @@ class ApiFetcher(object):
         return r
 
 
-class PaginatorInterface(metaclass=abc.ABCMeta):
-    @abc.abstractmethod
-    def reset(self):
-        pass
-
-    @abc.abstractmethod
-    def alter_request_params(self, reqp: dict) -> dict:
-        pass
-
-    @abc.abstractmethod
-    def inspect_response(self, res) -> None:
-        pass
-
-    @abc.abstractmethod
-    def has_more(self) -> bool:
-        pass
-
-
 class FetcherGeneratorInterface(metaclass=abc.ABCMeta):
     def get(self, url, **kwargs):
         return self.request_url("get", url, **kwargs)
@@ -328,8 +311,8 @@ class PaginatedFetcher(FetcherGeneratorInterface):
         kwargs["url"] = url
 
         while self.pager.has_more():
-            newargs = self.pager.alter_request_params(kwargs)
-            res = self.fetcher.request_url(**newargs)
+            self.pager.alter_request_params(kwargs)  # mutates kwargs directly
+            res = self.fetcher.request_url(**kwargs)
             self.pager.inspect_response(res)
             yield res
 
