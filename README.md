@@ -12,7 +12,8 @@ TODO:
  * [ ] dig encodings and charsets (no "apparent charset" magic)
  * [ ] rate limiting should be able to inspect responses (in case the server included relevant headers)
  * [ ] circuit breaker / bulkheading to avoid retrying on a dead service (maybe look at https://pypi.org/project/pybreaker/)
-
+ * [ ] apifetch.py L170 allow defining fatal codes outside of that range? e.g. 302 (couple with allow_redirects=False)?
+ * [ ] log.py L283 allow masking on query string (e.g. Taobao/Lazada API with md5 signature, want to hide "session" and "sign")
 
 ## Remarks on timeouts
 
@@ -63,3 +64,10 @@ The last point can be worked around. The `SignalTimeout.SignalTimeoutException`
 exception raised stays internal to the process manager ; we have to manually
 set a flag while still inside the process manager, after the call to `requests`, and
 manually raise an exception if the flag is unset once we are out of the process manager.
+
+
+## License
+
+Apache-2.0 License
+
+Vendored [cyberphone/json-canonicalization](https://github.com/cyberphone/json-canonicalization/tree/master/python3/src/org/webpki/json), Copyright 2006-2019 WebPKI.org (http://webpki.org), Apache-2.0 License
