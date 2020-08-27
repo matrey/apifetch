@@ -34,7 +34,9 @@ class ApiFetcher(object):
     s: requests.sessions.Session
 
     def __init__(
-        self, strategy: RequestStrategy, log: RawLogger,
+        self,
+        strategy: RequestStrategy,
+        log: RawLogger,
     ):
         self.strategy = strategy
         self.log = log
@@ -206,9 +208,8 @@ class ApiFetcher(object):
         # In the query string, avoid spaces becoming "+" (want "%20" instead)
         # (see https://bugs.python.org/issue13866 for more context)
         if params:
-            kwargs["params"] = urllib.parse.urlencode(
-                params, quote_via=urllib.parse.quote
-            )
+            quote_callable = urllib.parse.quote
+            kwargs["params"] = urllib.parse.urlencode(params, quote_via=quote_callable)  # type: ignore
 
         # Replicating defaults from https://github.com/psf/requests/blob/master/requests/api.py
         if method == "get" or method == "options":
@@ -301,7 +302,10 @@ class PaginatedFetcher(FetcherGeneratorInterface):
     pager: PaginatorInterface
 
     def __init__(
-        self, strategy: RequestStrategy, log: RawLogger, pager: PaginatorInterface,
+        self,
+        strategy: RequestStrategy,
+        log: RawLogger,
+        pager: PaginatorInterface,
     ):
         self.fetcher = ApiFetcher(strategy, log)
         self.pager = pager
@@ -325,7 +329,9 @@ class Fetcher(FetcherGeneratorInterface):
     fetcher: ApiFetcher
 
     def __init__(
-        self, strategy: RequestStrategy, log: RawLogger,
+        self,
+        strategy: RequestStrategy,
+        log: RawLogger,
     ):
         self.fetcher = ApiFetcher(strategy, log)
 

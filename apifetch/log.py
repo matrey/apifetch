@@ -177,7 +177,8 @@ class RawLogger(object):
         timing: Timer = None,
     ):
         self._dump_request_data(
-            request, proxy_info=None,
+            request,
+            proxy_info=None,
         )
         self._write_boundary("response")
         self.bytearr.extend(
@@ -205,7 +206,9 @@ class RawLogger(object):
         history.append(response)
 
         for response in history:
-            self._dump_one(response,)
+            self._dump_one(
+                response,
+            )
         if timing:
             self._dump_timer(timing)
 
@@ -373,7 +376,8 @@ class RawLogger(object):
 
         proxy_info = self.get_proxy_information(response)
         self._dump_request_data(
-            response.request, proxy_info=proxy_info,
+            response.request,
+            proxy_info=proxy_info,
         )
         self._dump_response_data(response)
 
