@@ -1,7 +1,15 @@
+venv:
+	# You might need to do this first: sudo apt-get install python3.7-venv
+	python3.7 -m venv .venv
 
+install:
+	.venv/bin/pip install -r requirements.txt
+
+install-dev:
+	.venv/bin/pip install -r requirements-dev.txt
 
 lint:
-	pipenv run isort -y
-	pipenv run black $(shell pwd)
-	pipenv run flake8 $(shell pwd)
-	pipenv run mypy $(shell pwd)
+	.venv/bin/isort .
+	.venv/bin/black $(shell pwd)
+	.venv/bin/flake8 $(shell pwd)
+	.venv/bin/mypy $(shell pwd)
