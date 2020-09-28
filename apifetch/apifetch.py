@@ -3,6 +3,7 @@ import logging
 import math
 import time
 import urllib.parse
+from typing import Type
 
 import cchardet
 import requests
@@ -11,6 +12,7 @@ from .exceptions import RequestFailure, RequestTimeout
 from .log import RawLogger, Timer
 from .pagination import PaginatorInterface
 from .request import RateLimiterInterface, RequestStrategy, SignalTimeout
+from .response import AbstractProcessor
 
 
 # Monkey-patch requests to have it use cchardet instead of chardet
@@ -292,11 +294,29 @@ class FetcherGeneratorInterface(metaclass=abc.ABCMeta):
         return self.request_url("post", url, **kwargs)
 
     @abc.abstractmethod
-    def request_url(self, method, url, **kwargs):  # generator function
+    def fetch_url(self, method, url, **kwargs):  # generator function
         pass
 
 
-class PaginatedFetcher(FetcherGeneratorInterface):
+class ProcessingFetcherMixin(abc.ABC):
+    @abc.abstractmethod
+    def fetch_url(self, method, url, **kwargs):  # generator function
+        pass
+
+    def fetch_and_process_url(
+        self, method, url, payload_processor_class: Type[AbstractProcessor], **kwargs
+    ):
+        # instanciate the payload processor
+        processor = (payload_processor_class)()
+
+        for r in self.fetch_url(method=method, url=url, **kwargs):
+            # Process the payload
+            processor.process_one_response(r)
+
+        return processor.return_all_data()
+
+
+class PaginatedFetcher(FetcherGeneratorInterface, ProcessingFetcherMixin):
 
     fetcher: ApiFetcher
     pager: PaginatorInterface
@@ -310,7 +330,7 @@ class PaginatedFetcher(FetcherGeneratorInterface):
         self.fetcher = ApiFetcher(strategy, log)
         self.pager = pager
 
-    def request_url(self, method, url, **kwargs):  # generator function
+    def fetch_url(self, method, url, **kwargs):  # generator function
 
         self.pager.reset()
 
@@ -324,7 +344,7 @@ class PaginatedFetcher(FetcherGeneratorInterface):
             yield res
 
 
-class Fetcher(FetcherGeneratorInterface):
+class Fetcher(FetcherGeneratorInterface, ProcessingFetcherMixin):
 
     fetcher: ApiFetcher
 
@@ -335,7 +355,7 @@ class Fetcher(FetcherGeneratorInterface):
     ):
         self.fetcher = ApiFetcher(strategy, log)
 
-    def request_url(self, method, url, **kwargs):  # generator function
+    def fetch_url(self, method, url, **kwargs):  # generator function
 
         kwargs["method"] = method
         kwargs["url"] = url
