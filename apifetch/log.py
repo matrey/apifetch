@@ -9,6 +9,7 @@ import secrets
 import time
 from datetime import datetime
 from typing import Callable, List
+import os
 
 from requests import compat
 
@@ -108,6 +109,8 @@ class BodyFilter(object):
 
 class RawLogger(object):
 
+    path: str
+
     request_header_filter = None
     response_header_filter = None
     response_body_filter = None
@@ -132,19 +135,25 @@ class RawLogger(object):
 
         self.counter = 0
 
-    def __init__(self, sampling: int = 1):
+    def __init__(self, path: str, sampling: int = 1):
         self.sampling = sampling  # TODO: use the sampling
+        self.path = path
 
         self.reset()
 
-    def to_file(self, filepath):
+    def to_file(self):
+        filename = self.boundary
+        filepath = os.path.join(self.path, filename)
         self._write_closing_boundary()
         f = open(filepath, "wb")
         f.write(self.bytearr)
         f.close()
         self.reset()
+        return filename
 
-    def to_gz_file(self, filepath):
+    def to_gz_file(self):
+        filename = self.boundary + '.gz'
+        filepath = os.path.join(self.path, filename)
         # From comments on https://stackoverflow.com/a/26753451/8046487
         # zlib.compress is incompatible with the gzip command-line utility in that
         # gzip includes a header and checksum, while this mechanism simply compresses
@@ -156,6 +165,7 @@ class RawLogger(object):
             fgz.write(self.bytearr)
         f.close()
         self.reset()
+        return filename
 
     def with_request_header_filter(self, header_filter: HeaderFilter):
         self.request_header_filter = header_filter

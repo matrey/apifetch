@@ -61,7 +61,7 @@ class ApiFetcher(object):
     def post(self, url, **kwargs):
         return self.request_url("post", url, **kwargs)
 
-    def request_url(self, method, url, **kwargs):
+    def request_url(self, method, url, pre=None, **kwargs):
 
         tries = 0
         start_ts = time.perf_counter()
@@ -147,6 +147,8 @@ class ApiFetcher(object):
                     self.strategy,
                     self.log,
                     self.s,
+                    self.logger,
+                    pre,
                     override_kill_timeout=new_kill_timeout,
                     **kwargs
                 )
@@ -201,6 +203,8 @@ class ApiFetcher(object):
         strategy: RequestStrategy,
         log: RawLogger,
         s: requests.sessions.Session,
+        logger,
+        pre=None, 
         override_kill_timeout=None,
         params=None,
         **kwargs
@@ -250,6 +254,10 @@ class ApiFetcher(object):
         req = requests.Request(method.upper(), url, **kwargs_req)
         prepped = s.prepare_request(req)
 
+        # This is the opportunity to alter the request (e.g. for injecting auth)
+        if pre:
+            pre(prepped)
+
         timed_out = True
         r = None
         kill_timeout = (
@@ -277,21 +285,25 @@ class ApiFetcher(object):
             if is_logged:
                 timer.stop()
                 log.dump_failed(request=prepped, exception=e, timing=timer)
+                logfile = log.to_gz_file()
+                logger.debug('Raw trace at {}'.format(logfile))
             raise
 
         if is_logged:
             timer.stop()
             log.dump(response=r, timing=timer)
+            logfile = log.to_gz_file()
+            logger.debug('Raw trace at {}'.format(logfile))
 
         return r
 
 
-class FetcherGeneratorInterface(metaclass=abc.ABCMeta):
+class FetcherGeneratorInterface(abc.ABC):
     def get(self, url, **kwargs):
-        return self.request_url("get", url, **kwargs)
+        return self.fetch_url("get", url, **kwargs)
 
     def post(self, url, **kwargs):
-        return self.request_url("post", url, **kwargs)
+        return self.fetch_url("post", url, **kwargs)
 
     @abc.abstractmethod
     def fetch_url(self, method, url, **kwargs):  # generator function
