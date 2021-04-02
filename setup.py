@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="apifetch",  # Required
-    version="0.4.0",  # Required
+    version="0.5.0",  # Required
     classifiers=[  # Optional
         # How mature is this project? Common values are
         #   3 - Alpha
@@ -18,7 +18,7 @@ setup(
         # These classifiers are *not* checked by 'pip install'. See instead
         # 'python_requires' below.
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.9",
     ],
     # You can just specify package directories manually here if your project is
     # simple. Or you can use find_packages().
@@ -30,6 +30,6 @@ setup(
     #   py_modules=["my_module"],
     #
     packages=find_packages(exclude=["contrib", "docs", "tests"]),  # Required
-    python_requires=">=3.7",
+    python_requires=">=3.9",
     install_requires=["requests", "cchardet"],
 )

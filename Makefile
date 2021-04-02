@@ -1,6 +1,6 @@
 venv:
-	# You might need to do this first: sudo apt-get install python3.7-venv
-	python3.7 -m venv .venv
+	# You might need to do this first: sudo apt-get install python3.9-venv
+	python3.9 -m venv .venv
 
 install:
 	.venv/bin/pip install -r requirements.txt
