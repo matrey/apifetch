@@ -208,7 +208,7 @@ class ApiFetcher(object):
         log: RawLogger,
         s: requests.sessions.Session,
         logger,
-        pre=None, 
+        pre=None,
         override_kill_timeout=None,
         params=None,
         **kwargs
@@ -290,14 +290,14 @@ class ApiFetcher(object):
                 timer.stop()
                 log.dump_failed(request=prepped, exception=e, timing=timer)
                 logfile = log.to_gz_file()
-                logger.debug('Raw trace at {}'.format(logfile))
+                logger.debug("Raw trace at {}".format(logfile))
             raise
 
         if is_logged:
             timer.stop()
             log.dump(response=r, timing=timer)
             logfile = log.to_gz_file()
-            logger.debug('Raw trace at {}'.format(logfile))
+            logger.debug("Raw trace at {}".format(logfile))
 
         return r
 

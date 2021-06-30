@@ -5,11 +5,11 @@
 import base64
 import gzip
 import json
+import os
 import secrets
 import time
 from datetime import datetime
 from typing import Callable, List
-import os
 
 from requests import compat
 
@@ -152,7 +152,7 @@ class RawLogger(object):
         return filename
 
     def to_gz_file(self):
-        filename = self.boundary + '.gz'
+        filename = self.boundary + ".gz"
         filepath = os.path.join(self.path, filename)
         # From comments on https://stackoverflow.com/a/26753451/8046487
         # zlib.compress is incompatible with the gzip command-line utility in that
