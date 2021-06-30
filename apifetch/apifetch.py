@@ -8,7 +8,7 @@ from typing import Type
 import cchardet
 import requests
 
-from .exceptions import RequestFailure, RequestTimeout
+from .exceptions import RequestFailure, RequestsHTTPError, RequestTimeout
 from .log import RawLogger, Timer
 from .pagination import PaginatorInterface
 from .request import RateLimiterInterface, RequestStrategy, SignalTimeout
@@ -184,7 +184,11 @@ class ApiFetcher(object):
                     or str(r.status_code)[0:1] + "xx" in self.strategy.fatal_codes
                 ):
                     # Fatal, do not retry
-                    r.raise_for_status()
+                    try:
+                        r.raise_for_status()
+                    except requests.exceptions.HTTPError as e:
+                        # We raise our own error so that clients don't need to require the "requests" package directly
+                        raise RequestsHTTPError from e
                 else:
                     continue  # retry
 
